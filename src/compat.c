@@ -19,7 +19,7 @@ extern char *mguard_env_logpath;
 void dmalloc_message(const char *format, ...);
 
 
-static  void    build_logfile_path(int sid, char *buf, const int buf_len);
+static  void    build_logfile_path(int sid, char *timestamp_str,char *buf, const int buf_len);
 
 /*
  * Local ascii to unsigned long function
@@ -108,7 +108,7 @@ static int loc_snprintf(char *buf, const int buf_size, const char *format, ...)
 }
 
 
-void mguard_open_log(int sid)
+void mguard_open_log(int sid,char *timestamp_str)
 {
 
 //  int   len;
@@ -118,7 +118,7 @@ void mguard_open_log(int sid)
     return;
   }
 
-  build_logfile_path(sid,log_file_path, sizeof(log_file_path));
+  build_logfile_path(sid,timestamp_str,log_file_path, sizeof(log_file_path));
   /* open our logfile */
   outfile_fd = open(log_file_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
   if (outfile_fd < 0) {
@@ -327,8 +327,8 @@ static void    _dmalloc_vmessage(const char *format, int single_line ,va_list ar
 
 }
 
-
-static  void    build_logfile_path(int sid,char *buf, const int buf_len)
+extern pid_t ourgetpid();
+static  void    build_logfile_path(int sid,char *timestamp_str,char *buf, const int buf_len)
 {
   char  *bounds_p;
   char  *path_p, *buf_p;//,*start_p;
@@ -380,25 +380,12 @@ static  void    build_logfile_path(int sid,char *buf, const int buf_len)
 #endif
     }
     /* dump the pid -- also support backwards compatibility with %d */
-    if (*path_p == 'p' || *path_p == 'd') {
-#if HAVE_GETPID
-      /* we make it long in case it's big and we hope it will promote if not */
-      long  our_pid = getpid();
-      buf_p += loc_snprintf(buf_p, bounds_p - buf_p, "%ld", our_pid);
-#else
-      buf_p += loc_snprintf(buf_p, bounds_p - buf_p, "no-getpid");
-#endif
+    if (*path_p == 'p') {
+      buf_p += loc_snprintf(buf_p, bounds_p - buf_p, "%d",ourgetpid());
     }
     /* dump the time value */
     if (*path_p == 't') {
-#if HAVE_TIME
-      /* we make time a long here so it will promote */
-      long  now;
-      now = time(NULL);
-      buf_p += loc_snprintf(buf_p, bounds_p - buf_p, "%ld", now);
-#else
-      buf_p += loc_snprintf(buf_p, bounds_p - buf_p, "no-time");
-#endif
+      buf_p += loc_snprintf(buf_p, bounds_p - buf_p, "%s",timestamp_str);
     }
     /* dump the user-id */
     if (*path_p == 'u') {

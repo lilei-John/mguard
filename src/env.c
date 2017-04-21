@@ -115,7 +115,7 @@ void env_setup_logpath(void)
 
     //do we need to do some validation??
     mguard_env_logpath=env_logpath;
-    printf("env_logpath:%s\n",env_logpath);
+//    printf("env_logpath:%s\n",env_logpath);
 }
 
 static void    _dmalloc_environ_process(const char *env_str,

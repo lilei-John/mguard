@@ -14,8 +14,10 @@ class MSummary:
 
 
 def main():
+    ver='1.01'
     inputFile=sys.argv[1]
-    
+    headers=1
+    line_count=0
     out=None
     if len(sys.argv) >2:
         out=open(sys.argv[2],'w')
@@ -25,10 +27,27 @@ def main():
     
     for line in open(inputFile):
         line=line.strip()
+        
+        if line.startswith("MGUARD version '1.0'"):
+            ver='1.0'
+        
+        
+        if headers !=0 and ver=='1.01' and line.startswith("========@"):
+            out.write("\n")
+            out.write(line+"\n")
+            headers=0
+        elif headers!=0 and ver=='1.0' and line_count>=7:
+            out.write("\n")
+            headers=0    
+            
+        if headers:
+            out.write(line+"\n")
+                
         if line.startswith(":F"):
             tokens=line.split(":")
             k=tokens[2].strip()
             smap[k]=tokens[6].strip()
+        line_count+=1
              
     for line in open(inputFile):
         line=line.strip()
@@ -51,16 +70,19 @@ def main():
     keys=rmap.keys()
     keys.sort()
 
+    total_mem=0
     for k in keys:
         m=rmap[k]
-
+        total_mem+=m.size
         str=":S:{}:{}:{}:{}".format(k,m.size,m.count,"--" if not smap.has_key(k) else smap[k])
-        print '>>>> '+str
+##        print '>>>> '+str
         if out is not None:
             out.write(str)
             out.write("\n")
-
+            
+    
     if out is not None:
+        out.write("\nTotal Counting Memory Size:{}\n".format(total_mem))
         out.close()
 
         

@@ -11,7 +11,7 @@
 #undef BIT_IS_SET
 #define BIT_IS_SET(v,f)     ((v) & (f))
 
-#define MGUARD_VER "1.0"
+#define MGUARD_VER "1.01"
 #define MAX_CALL_STACK_LEN 10
 
 #define OPT_DBG_TRACK_FORKED_CHILD      (1) //(1<<0)

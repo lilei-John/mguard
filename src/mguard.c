@@ -218,7 +218,7 @@ static int initialized = 0;
 
 static int forked=0;
 
-long mguard_opt_debug=(OPT_DBG_NO_TRACK_DLOPEN|OPT_DBG_NO_TRACK_MMAP|OPT_DBG_NO_TRACK_MEMALIGN);
+long mguard_opt_debug=(OPT_DBG_NO_TRACK_DLOPEN|OPT_DBG_NO_TRACK_MEMALIGN);
 size_t mguard_opt_rpid=0;
 
 static pthread_t report_thread=NULL;
@@ -230,29 +230,29 @@ extern void mguard_open_log(int sid);
 extern void mguard_close_log(void);
 extern void env_setup_logpath(void);
 
-static pid_t ourgetpid() {
+pid_t ourgetpid() {
   return syscall(SYS_getpid);
 }
 
-static pid_t ourgettid() {
+pid_t ourgettid() {
   return syscall(SYS_gettid);
 }
 
 static void prepare_fork()
 {
-	printf("!!!!0[%d]\n",ourgettid());
+//	printf("!!!!0[%d]\n",ourgettid());
 	forked=1;
 }
 
 static void parent_fork()
 {
-   printf("!!!!1[%d]\n",ourgettid());
+//   printf("!!!!1[%d]\n",ourgettid());
    forked=0;
 }
 
 static void child_fork()
 {
-	printf("!!!!2[%d]\n",ourgettid());
+//	printf("!!!!2[%d]\n",ourgettid());
     forked=1;
 
 }
@@ -277,6 +277,54 @@ static void* dummy_calloc(size_t nmemb, size_t size) {
     return ptr;
 }
 
+
+static void report_meminfo()
+{
+    FILE *fp;
+    int nread=0;
+    size_t len = 1024;
+    char *buf=NULL;
+    char* buffer = (char*)malloc( 1024 );
+    char *file="/proc/meminfo";
+    char content[16]="";
+    fp = fopen(file, "rb");
+    if (fp == NULL)
+    {
+        printf("error to open: %s\n", file);
+        exit(EXIT_FAILURE);
+    }
+    while((nread = getline(&buffer, &len, fp)) != -1) {
+        if((buf=strstr(buffer, "MemTotal"))!=NULL)
+        {
+            buffer[strlen(buffer)-1]=0;
+            sscanf(buffer, "%s%s", content, content);
+            int memtotal_kb=(int)(strtof(content, NULL));
+            dmalloc_message("MemTotal:\t%dkB",memtotal_kb);
+        }
+        if((buf=strstr(buffer, "MemFree"))!=NULL)
+        {
+            buffer[strlen(buffer)-1]=0;
+            sscanf(buffer, "%s%s", content, content);
+            int memfree_kb=(int)(strtof(content, NULL));
+            dmalloc_message("MemFree:\t%dkB",memfree_kb);
+        }
+
+        if((buf=strstr(buffer, "MemAvailable"))!=NULL)
+        {
+            buffer[strlen(buffer)-1]=0;
+            sscanf(buffer, "%s%s", content, content);
+            int memava_kb=(int)(strtof(content, NULL));
+            dmalloc_message("MemAvailable:\t%dkB\n",memava_kb);
+            dmalloc_message("\n");
+            break;
+        }
+        memset((void *)buffer,0,sizeof(buffer));
+    }
+    fclose(fp);
+    free( (void*)buffer );
+}
+
+
 static void dummy_free(void *ptr) {
 	ptr=ptr;
 }
@@ -288,12 +336,16 @@ static void *report_job(void *arg)
     struct mcall_struct *rmst;
     struct mcall_struct *rtmp;
     int sid=get_SID();
+    time_t now;
+    char    datetime[100];
+    time(&now);
+    strftime(datetime, 100, "%Y%m%d%H%M%S", localtime(&now));
+
 
     //not to bother with mguard itself
     entered=1;
 
     printf("[MGUARD] start report generation thread!!\n");
-
 
     mguard_open_log(sid);
     //clone the mcall_table
@@ -310,18 +362,18 @@ static void *report_job(void *arg)
     {
         int i=0;
 
-        time_t timep;
-        time(&timep);
-        printf("\n[MGUARD]Report_%d start @%s",sid,ctime(&timep));
-        dmalloc_message("[MGUARD]Report_%d\n========@%s",sid,ctime(&timep));
+
+        report_meminfo();
+
+        printf("\n[MGUARD]Report_%d start @%s",sid,datetime);
+        dmalloc_message("[MGUARD]Report_%d\n========@%s",sid,datetime);
         HASH_ITER(hh, mtable, rmst, rtmp) {
           dmalloc_message(":M:0x%08X:%d:%02d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.type,rmst->record.backtrace_id);
           i++;
         //          free(s->str);
         }
-        time(&timep);
-        dmalloc_message("========[%d]@%s\n",i,ctime(&timep));
-        printf("[MGUARD]Report_%d end @%s",sid,ctime(&timep));
+        dmalloc_message("========[%d]@%s\n",i,datetime);
+        printf("[MGUARD]Report_%d end @%s",sid,datetime);
 
 
         {
@@ -331,11 +383,10 @@ static void *report_job(void *arg)
             struct hash_id_struct *tubt;
                 //
             int i=0,j=0;
-            time_t timep;
-            time(&timep);
-            printf("[MGUARD]BTList_%d start @%s",sid,ctime(&timep));
 
-            dmalloc_message("[MGUARD]BTList_%d\n++++++++@%s",sid,ctime(&timep));
+            printf("[MGUARD]BTList_%d start @%s",sid,datetime);
+
+            dmalloc_message("[MGUARD]BTList_%d\n++++++++@%s",sid,datetime);
             HASH_ITER(hh, mtable, rmst, rtmp) {
                 size_t bid=rmst->record.backtrace_id;
                 HASH_FIND(hh,btrace,&bid,sizeof(size_t),rbt);
@@ -380,10 +431,8 @@ static void *report_job(void *arg)
                 ubt=NULL;
             }
             ubt_table=NULL;
-
-            time(&timep);
-            dmalloc_message("++++++++[%d]@%s\n",i,ctime(&timep));
-            printf("[MGUARD]BTList_%d end @%s",sid,ctime(&timep));
+            dmalloc_message("++++++++[%d/%d]@%s\n",i,HASH_COUNT(mtable),datetime);
+            printf("[MGUARD]BTList_%d end @%s",sid,datetime);
         }
     }
 
@@ -532,9 +581,6 @@ static void pre_guard(mcall_record *record) {
 #endif
 //    //
         while (1) {
-
-//            unw_word_t  offset, pc;
-
             if( (unw_step(&cursor) <= 0) || (i >= MAX_CALL_STACK_LEN))
             {
                 break;
