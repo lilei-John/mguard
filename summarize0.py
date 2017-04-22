@@ -2,11 +2,11 @@ import sys, os, struct, ctypes, argparse
 
 def ERROR(x): print "!!ERROR!! "+x
 
-def ERROR(x,exception): 
+def ERROR(x,exception):
     print "!!ERROR!! "+x
     print "    => ", exception
 
-def WARNING(x): print "!!WARNING!! "+x   
+def WARNING(x): print "!!WARNING!! "+x
 
 class MSummary:
     pass
@@ -24,31 +24,32 @@ def main():
 
     smap={}
     rmap={}
-    
+
     for line in open(inputFile):
         line=line.strip()
-        
+
         if line.startswith("MGUARD version '1.0'"):
             ver='1.0'
-        
-        
+
+
         if headers !=0 and ver=='1.01' and line.startswith("========@"):
             out.write("\n")
+            out.write(':[TYPE]:[BACKTRACE_ID]:[TOTAL_UNFREED_SIZE]:[COUNT]:[BACKTRACE]'+"\n")
             out.write(line+"\n")
             headers=0
         elif headers!=0 and ver=='1.0' and line_count>=7:
             out.write("\n")
-            headers=0    
-            
+            headers=0
+
         if headers:
             out.write(line+"\n")
-                
+
         if line.startswith(":F"):
             tokens=line.split(":")
             k=tokens[2].strip()
             smap[k]=tokens[6].strip()
         line_count+=1
-             
+
     for line in open(inputFile):
         line=line.strip()
         if line.startswith(":M"):
@@ -63,7 +64,7 @@ def main():
                 rmap[k]=m
             else:
                 m=rmap[k]
-            
+
             m.count+=1
             m.size+=int(tokens[3])
 
@@ -79,14 +80,14 @@ def main():
         if out is not None:
             out.write(str)
             out.write("\n")
-            
-    
+
+
     if out is not None:
         out.write("\nTotal Counting Memory Size:{}\n".format(total_mem))
         out.close()
 
-        
-    
+
+
 
 if __name__ == "__main__":
     main()

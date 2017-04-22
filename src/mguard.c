@@ -77,7 +77,8 @@ static int   (*temp_dlclose)(void* handle);
 extern void dmalloc_message(const char *format, ...);
 extern void dmalloc_message_concat(const char *format, ...);
 
-#define uthash_malloc (real_malloc)
+#define uthash_malloc(x) umalloc(x)
+#define uthash_free(x,y) ufree(x,y)
 #include "utlist.h"
 #include "uthash.h"
 
@@ -95,6 +96,20 @@ extern void dmalloc_message_concat(const char *format, ...);
 
 
 
+
+unsigned long uthash_memory_usage=0;
+void* umalloc(size_t size)
+{
+    uthash_memory_usage+=size;
+   return (real_malloc)(size);
+}
+
+
+void ufree(void *ptr,size_t size)
+{
+    uthash_memory_usage-=size;
+    (real_free)(ptr);
+}
 
 
 int get_SID()
@@ -167,9 +182,6 @@ typedef struct {
         	int flag;
 		} mremap_call;
 
-		struct {
-			size_t length;
-		} munmap_call;
 
 		struct {
 			const char *filename;
@@ -226,7 +238,7 @@ static int generating_report=0;
 static pthread_rwlock_t btrace_table_lock;
 static pthread_rwlock_t mcall_table_lock;
 
-extern void mguard_open_log(int sid);
+extern void mguard_open_log(int sid,char *timestamp_str);
 extern void mguard_close_log(void);
 extern void env_setup_logpath(void);
 
@@ -315,11 +327,13 @@ static void report_meminfo()
             sscanf(buffer, "%s%s", content, content);
             int memava_kb=(int)(strtof(content, NULL));
             dmalloc_message("MemAvailable:\t%dkB\n",memava_kb);
-            dmalloc_message("\n");
+
             break;
         }
         memset((void *)buffer,0,sizeof(buffer));
     }
+    dmalloc_message("MemMGUARD:\t%dkB\n",(uthash_memory_usage/1024));
+    dmalloc_message("\n");
     fclose(fp);
     free( (void*)buffer );
 }
@@ -347,12 +361,12 @@ static void *report_job(void *arg)
 
     printf("[MGUARD] start report generation thread!!\n");
 
-    mguard_open_log(sid);
+    mguard_open_log(sid,datetime);
     //clone the mcall_table
     if (pthread_rwlock_rdlock(&mcall_table_lock) != 0) MERR;
     HASH_ITER(hh, mcall_table, rmst, rtmp) {
 
-        struct mcall_struct *mst=(real_malloc)(sizeof(struct mcall_struct));
+        struct mcall_struct *mst=uthash_malloc(sizeof(struct mcall_struct));
         memcpy(&mst->record,&rmst->record,sizeof(mcall_record));
         mst->id=rmst->id;
         HASH_ADD(hh,mtable,id,sizeof(size_t),mst);
@@ -384,9 +398,9 @@ static void *report_job(void *arg)
                 //
             int i=0,j=0;
 
-            printf("[MGUARD]BTList_%d start @%s",sid,datetime);
+            printf("[MGUARD]BTList_%d start @%s\n",sid,datetime);
 
-            dmalloc_message("[MGUARD]BTList_%d\n++++++++@%s",sid,datetime);
+            dmalloc_message("[MGUARD]BTList_%d\n++++++++@%s\n",sid,datetime);
             HASH_ITER(hh, mtable, rmst, rtmp) {
                 size_t bid=rmst->record.backtrace_id;
                 HASH_FIND(hh,btrace,&bid,sizeof(size_t),rbt);
@@ -415,7 +429,7 @@ static void *report_job(void *arg)
 
                         }
                         dmalloc_message_concat("\n");
-                        ubt=(real_malloc)(sizeof(struct hash_id_struct));
+                        ubt=uthash_malloc(sizeof(struct hash_id_struct));
                         ubt->id=bid;
                         HASH_ADD(hh,ubt_table,id,sizeof(size_t),ubt);
 
@@ -427,12 +441,12 @@ static void *report_job(void *arg)
 
             HASH_ITER(hh, ubt_table, ubt, tubt) {
                 HASH_DELETE(hh,ubt_table,ubt);
-                (real_free)(ubt);
+                uthash_free(ubt,sizeof(struct hash_id_struct));
                 ubt=NULL;
             }
             ubt_table=NULL;
             dmalloc_message("++++++++[%d/%d]@%s\n",i,HASH_COUNT(mtable),datetime);
-            printf("[MGUARD]BTList_%d end @%s",sid,datetime);
+            printf("[MGUARD]BTList_%d end @%s\n",sid,datetime);
         }
     }
 
@@ -441,7 +455,7 @@ static void *report_job(void *arg)
 
     HASH_ITER(hh, mtable, rmst, rtmp) {
         HASH_DELETE(hh,mtable,rmst);
-        (real_free)(rmst);
+        uthash_free(rmst,sizeof(struct mcall_struct));
         rmst=NULL;
     }
     printf("[MGUARD] end report generation thread!!\n");
@@ -493,9 +507,19 @@ bool is_pointer_valid(void *p) {
     return ret ? ret : errno != ENOMEM;
 }
 
-
+extern char env_opt_rname[];
+extern size_t env_opt_rpid;
 static int should_be_guard(mcall_record *record)
 {
+    if(strlen(env_opt_rname)>0 && (strncpy(program_invocation_short_name,env_opt_rname,strlen(env_opt_rname))!=0))
+    {
+        return 0;
+    }
+    if(env_opt_rpid>0 && ourgetpid()!=((pid_t)env_opt_rpid))
+    {
+       return 0;
+    }
+
     switch(record->type) {
         case MMAP_CALL:
         case MREMAP_CALL:
@@ -607,7 +631,7 @@ static void pre_guard(mcall_record *record) {
             HASH_FIND(hh,btrace,&_bt.id,sizeof(size_t),tbt);
             if(tbt==NULL)
             {
-                tbt=(real_malloc)(sizeof(struct backtrace_struct));
+                tbt=uthash_malloc(sizeof(struct backtrace_struct));
                 memcpy(tbt,&_bt,sizeof(struct backtrace_struct));
                 HASH_ADD(hh,btrace,id,sizeof(size_t),tbt);
 
@@ -648,9 +672,24 @@ void post_guard(mcall_record* record)
             }
             else
             {
-                HASH_DELETE(hh,mcall_table,mst);
+
 //                printf("!!!! FREE  %d %d !!!!\n",HASH_CNT(hh,mcall_table),HASH_CNT(hh,btrace));
-                (real_free)(mst);
+                if(mst->record.backtrace_id!=0)
+                {
+                    struct backtrace_struct *tbt=NULL;
+                    HASH_FIND(hh,btrace,&(mst->record.backtrace_id),sizeof(size_t),tbt);
+                    if(tbt!=NULL)
+                    {
+                        if(0==(--tbt->cnt))
+                        {
+                            HASH_DELETE(hh,btrace,tbt);
+                            uthash_free(tbt,sizeof(struct backtrace_struct));
+                            tbt=NULL;
+                        }
+                    }
+                }
+                HASH_DELETE(hh,mcall_table,mst);
+                uthash_free(mst,sizeof(struct mcall_struct));
                 mst=NULL;
 
             }
@@ -687,7 +726,7 @@ UPDATE_RECORD:
            }
            else
            {
-               mst=(real_malloc)(sizeof(struct mcall_struct));
+               mst=uthash_malloc(sizeof(struct mcall_struct));
                memcpy(&mst->record,record,sizeof(mcall_record));
                mst->id=mid;
                HASH_ADD(hh,mcall_table,id,sizeof(size_t),mst);
@@ -788,6 +827,28 @@ static void call_end()
 }
 
 
+void do_unwind_backtrace()
+{
+    unw_cursor_t    cursor;
+    unw_context_t   context;
+
+    unw_getcontext(&context);
+    unw_init_local(&cursor, &context);
+
+    while (unw_step(&cursor) > 0) {
+        unw_word_t  offset, pc;
+        char        fname[64];
+
+        unw_get_reg(&cursor, UNW_REG_IP, &pc);
+
+        fname[0] = '\0';
+        (void) unw_get_proc_name(&cursor, fname, sizeof(fname), &offset);
+
+        printf ("%p : (%s+0x%x) [%p]\n", pc, fname, offset, pc);
+    }
+    printf("---------------------------------------------------------\n");
+}
+
 static void do_mcall(mcall_record *record,va_list args) {
 
     int internal=call_begin();
@@ -843,7 +904,12 @@ static void do_mcall(mcall_record *record,va_list args) {
 
         case FREE_CALL:
 		{
+//		    printf("F!! 0x%08X\n",record->ptr);
+//		    if(((unsigned int)record->ptr)==0x2e34302e){
+//		        do_unwind_backtrace();
+//		    }
 			real_free(record->ptr);
+//			printf("FF!! 0x%08X\n",record->ptr);
 		}
 		break;
 
@@ -862,7 +928,7 @@ static void do_mcall(mcall_record *record,va_list args) {
 
         case MUNMAP_CALL:
 		{
-			record->rv=real_munmap(record->ptr,record->munmap_call.length);
+			record->rv=real_munmap(record->ptr,record->size);
 		}
 		break;
 
@@ -941,6 +1007,31 @@ void free(void *ptr)
 
 	do_mcall(&record,nonused_va);
 }
+
+//void* dlopen(const char* filename, int flag)
+//{
+//    mcall_record record;
+//    INIT_RECORD(record);
+//    record.type = DLOPEN_CALL;
+//    record.dlopen_call.filename=filename;
+//    record.dlopen_call.flag = flag;
+//
+//    do_mcall(&record,nonused_va);
+//
+//    return record.ptr;
+//}
+//
+//int dlclose(void* handle)
+//{
+//    mcall_record record;
+//    INIT_RECORD(record);
+//    record.type = DLCLOSE_CALL;
+//    record.ptr = handle;
+//
+//    do_mcall(&record,nonused_va);
+//
+//    return record.rv;
+//}
 
 void* memalign(size_t boundary, size_t size)
 {

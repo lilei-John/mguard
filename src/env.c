@@ -45,7 +45,8 @@
 #define LOGFILE_LABEL		"log"
 #define START_LABEL		"start"
 #define LIMIT_LABEL		"limit"
-#define RPID_LABEL       "rpid"
+//#define RPID_LABEL      "rpid"
+#define RNAME_LABEL     "rname"
 
 #define ASSIGNMENT_CHAR     '='
 
@@ -57,8 +58,9 @@
 static	char env_logpath[512]	= { '\0' }; /* storage for env path */
 char *mguard_env_logpath=NULL;
 
-static long env_opt_debug=0;
-static size_t env_opt_rpid=0;
+long env_opt_debug=0;
+size_t env_opt_rpid=0;
+char env_opt_rname[512]={0};
 
 
 
@@ -118,37 +120,13 @@ void env_setup_logpath(void)
 //    printf("env_logpath:%s\n",env_logpath);
 }
 
-static void    _dmalloc_environ_process(const char *env_str,
-//                 DMALLOC_PNT *addr_p,
-//                 unsigned long *addr_count_p,
-
-                 long *debug_p,
-                 size_t *pid_p
-//                 unsigned long *interval_p, int *lock_on_p,
-//                 char **logpath_p, char **start_file_p,
-//                 int *start_line_p,
-//                 unsigned long *start_iter_p,
-//                 unsigned long *start_size_p,
-//                 unsigned long *limit_p
-                 )
+static void    _dmalloc_envopt_process(const char *env_str)
 {
   char      *env_p, *this_p;
   char      buf[1024];
   int       len, done_b = 0;
-//  unsigned int  flags = 0;
-//  attr_t    *attr_p;
-
-//  SET_POINTER(addr_p, NULL);
-//  SET_POINTER(addr_count_p, 0);
-  SET_POINTER(debug_p, 0);
-//  SET_POINTER(interval_p, 0);
-//  SET_POINTER(lock_on_p, 0);
-//  SET_POINTER(logpath_p, NULL);
-//  SET_POINTER(start_file_p, NULL);
-//  SET_POINTER(start_line_p, 0);
-//  SET_POINTER(start_iter_p, 0);
-//  SET_POINTER(start_size_p, 0);
-//  SET_POINTER(limit_p, 0);
+  long *debug_p=&env_opt_debug;
+  size_t* rpid_p=&env_opt_rpid;
 
   /* make a copy */
   (void)strncpy(buf, env_str, sizeof(buf));
@@ -191,11 +169,11 @@ static void    _dmalloc_environ_process(const char *env_str,
       SET_POINTER(debug_p, hex_to_long(this_p));
       continue;
     }
-    len = strlen(RPID_LABEL);
-    if (strncmp(this_p, RPID_LABEL, len) == 0
+    len = strlen(RNAME_LABEL);
+    if (strncmp(this_p, RNAME_LABEL, len) == 0
     && *(this_p + len) == ASSIGNMENT_CHAR) {
       this_p += len + 1;
-      SET_POINTER(pid_p, loc_atoul(this_p));
+      SET_POINTER(rpid_p, loc_atoul(this_p));
       continue;
     }
 
@@ -215,16 +193,17 @@ static void    _dmalloc_environ_process(const char *env_str,
 //      continue;
 //    }
 //
-//    /* get the dmalloc logfile name into a holding variable */
-//    len = strlen(LOGFILE_LABEL);
-//    if (strncmp(this_p, LOGFILE_LABEL, len) == 0
-//    && *(this_p + len) == ASSIGNMENT_CHAR) {
-//      this_p += len + 1;
-//      (void)strncpy(log_path, this_p, sizeof(log_path));
-//      log_path[sizeof(log_path) - 1] = '\0';
-//      SET_POINTER(logpath_p, log_path);
-//      continue;
-//    }
+
+    len = strlen(LOGFILE_LABEL);
+    if (strncmp(this_p, RNAME_LABEL, len) == 0
+    && *(this_p + len) == ASSIGNMENT_CHAR) {
+      this_p += len + 1;
+      (void)strncpy(env_opt_rname, this_p, sizeof(env_opt_rname));
+      env_opt_rname[sizeof(env_opt_rname) - 1] = '\0';
+      continue;
+    }
+
+    printf("rname=%s, rpid=%d, debug=%d\n",env_opt_rname,env_opt_rpid,(int)env_opt_debug);
 
 //    /*
 //     * start checking the heap after X iterations OR
@@ -292,7 +271,7 @@ void env_load_option(void)
 
     }
 
-    _dmalloc_environ_process(options,&env_opt_debug,&env_opt_rpid);
+    _dmalloc_envopt_process(options);
 
 
 
