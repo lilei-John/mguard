@@ -74,6 +74,7 @@ static int   (*temp_munmap)(void *addr, size_t length);
 static void* (*temp_dlopen)(const char *filename, int flag);
 static int   (*temp_dlclose)(void* handle);
 
+extern void env_load_option(void);
 extern void dmalloc_message(const char *format, ...);
 extern void dmalloc_message_concat(const char *format, ...);
 
@@ -187,10 +188,6 @@ typedef struct {
 			const char *filename;
 			int flag;
 		} dlopen_call;
-
-		struct {
-			void* handle;
-		} dlclose_call;
 
 
   };
@@ -359,9 +356,11 @@ static void *report_job(void *arg)
     //not to bother with mguard itself
     entered=1;
 
-    printf("[MGUARD] start report generation thread!!\n");
+    printf("[MGUARD] Start report generation thread!!\n");
 
     mguard_open_log(sid,datetime);
+
+    dmalloc_message("Process: %s[%d]",program_invocation_short_name,ourgetpid());
     //clone the mcall_table
     if (pthread_rwlock_rdlock(&mcall_table_lock) != 0) MERR;
     HASH_ITER(hh, mcall_table, rmst, rtmp) {
@@ -379,15 +378,15 @@ static void *report_job(void *arg)
 
         report_meminfo();
 
-        printf("\n[MGUARD]Report_%d start @%s",sid,datetime);
-        dmalloc_message("[MGUARD]Report_%d\n========@%s",sid,datetime);
+        printf("\n[MGUARD]  Report_%d start @%s\n",sid,datetime);
+        dmalloc_message("[MGUARD]Report_%d\n========@%s\n",sid,datetime);
         HASH_ITER(hh, mtable, rmst, rtmp) {
           dmalloc_message(":M:0x%08X:%d:%02d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.type,rmst->record.backtrace_id);
           i++;
         //          free(s->str);
         }
         dmalloc_message("========[%d]@%s\n",i,datetime);
-        printf("[MGUARD]Report_%d end @%s",sid,datetime);
+        printf("[MGUARD]  Report_%d end @%s\n",sid,datetime);
 
 
         {
@@ -398,7 +397,7 @@ static void *report_job(void *arg)
                 //
             int i=0,j=0;
 
-            printf("[MGUARD]BTList_%d start @%s\n",sid,datetime);
+            printf("[MGUARD]  BTList_%d start @%s\n",sid,datetime);
 
             dmalloc_message("[MGUARD]BTList_%d\n++++++++@%s\n",sid,datetime);
             HASH_ITER(hh, mtable, rmst, rtmp) {
@@ -446,7 +445,7 @@ static void *report_job(void *arg)
             }
             ubt_table=NULL;
             dmalloc_message("++++++++[%d/%d]@%s\n",i,HASH_COUNT(mtable),datetime);
-            printf("[MGUARD]BTList_%d end @%s\n",sid,datetime);
+            printf("[MGUARD]  BTList_%d end @%s\n",sid,datetime);
         }
     }
 
@@ -458,9 +457,9 @@ static void *report_job(void *arg)
         uthash_free(rmst,sizeof(struct mcall_struct));
         rmst=NULL;
     }
-    printf("[MGUARD] end report generation thread!!\n");
     sync();
     mguard_close_log();
+    printf("[MGUARD] End report generation thread!!\n");
     __sync_fetch_and_sub(&generating_report,1);
 
     return NULL;
@@ -492,6 +491,7 @@ static void mguard_config(void)
 {
 
     env_setup_logpath();
+    env_load_option();
     (void)signal(SIGNAL1, signal_SIGNAL_handler);
     (void)signal(SIGNAL2, signal_SIGNAL_handler);
 }
@@ -509,16 +509,24 @@ bool is_pointer_valid(void *p) {
 
 extern char env_opt_rname[];
 extern size_t env_opt_rpid;
+extern int env_opt_remove_zero_called_btrace;
+static int guarding_flag=1;
+void set_guarding_flag(int flag)
+{
+    guarding_flag=flag;
+}
 static int should_be_guard(mcall_record *record)
 {
-    if(strlen(env_opt_rname)>0 && (strncpy(program_invocation_short_name,env_opt_rname,strlen(env_opt_rname))!=0))
+    if(0==guarding_flag && strlen(env_opt_rname)>0 && (0==strncmp(program_invocation_short_name,env_opt_rname,strlen(env_opt_rname))) )
     {
-        return 0;
+        printf("[MGUARD] Process: %s tracked, pid=%d\n",program_invocation_short_name,ourgetpid());
+        guarding_flag=1;
     }
-    if(env_opt_rpid>0 && ourgetpid()!=((pid_t)env_opt_rpid))
-    {
-       return 0;
-    }
+
+//    if(env_opt_rpid>0 && ourgetpid()!=((pid_t)env_opt_rpid))
+//    {
+//       return 0;
+//    }
 
     switch(record->type) {
         case MMAP_CALL:
@@ -535,10 +543,10 @@ static int should_be_guard(mcall_record *record)
              if(mguard_opt_debug & OPT_DBG_NO_TRACK_MEMALIGN)return 0;
             break;
         default:
-            return 1;
+            ;
 
     }
-    return 1;
+    return guarding_flag;
 }
 
 //static size_t _Zncwj_addr=0;
@@ -660,6 +668,7 @@ void post_guard(mcall_record* record)
         }
         break;
 
+
         case FREE_CALL:
         {
             mid=(size_t)record->ptr;
@@ -673,8 +682,7 @@ void post_guard(mcall_record* record)
             else
             {
 
-//                printf("!!!! FREE  %d %d !!!!\n",HASH_CNT(hh,mcall_table),HASH_CNT(hh,btrace));
-                if(mst->record.backtrace_id!=0)
+                if(env_opt_remove_zero_called_btrace>0 && mst->record.backtrace_id!=0)
                 {
                     struct backtrace_struct *tbt=NULL;
                     HASH_FIND(hh,btrace,&(mst->record.backtrace_id),sizeof(size_t),tbt);
@@ -844,7 +852,7 @@ void do_unwind_backtrace()
         fname[0] = '\0';
         (void) unw_get_proc_name(&cursor, fname, sizeof(fname), &offset);
 
-        printf ("%p : (%s+0x%x) [%p]\n", pc, fname, offset, pc);
+        printf ("%p : (%s+0x%x) [%p]\n", (void *)pc, fname, offset, (void *)pc);
     }
     printf("---------------------------------------------------------\n");
 }
@@ -904,12 +912,7 @@ static void do_mcall(mcall_record *record,va_list args) {
 
         case FREE_CALL:
 		{
-//		    printf("F!! 0x%08X\n",record->ptr);
-//		    if(((unsigned int)record->ptr)==0x2e34302e){
-//		        do_unwind_backtrace();
-//		    }
 			real_free(record->ptr);
-//			printf("FF!! 0x%08X\n",record->ptr);
 		}
 		break;
 
@@ -935,12 +938,14 @@ static void do_mcall(mcall_record *record,va_list args) {
         case DLOPEN_CALL:
 		{
 			record->ptr=real_dlopen(record->dlopen_call.filename,record->dlopen_call.flag);
+//			printf("ptr=0x%08X\n",record->ptr);
 		}
         break;
 
         case DLCLOSE_CALL:
 		{
-			record->rv=real_dlclose(record->dlclose_call.handle);
+//		    printf("ptr=0x%08X\n",record->ptr);
+			record->rv=real_dlclose(record->ptr);
 		}
 		break;
         default:
@@ -1008,30 +1013,30 @@ void free(void *ptr)
 	do_mcall(&record,nonused_va);
 }
 
-//void* dlopen(const char* filename, int flag)
-//{
-//    mcall_record record;
-//    INIT_RECORD(record);
-//    record.type = DLOPEN_CALL;
-//    record.dlopen_call.filename=filename;
-//    record.dlopen_call.flag = flag;
-//
-//    do_mcall(&record,nonused_va);
-//
-//    return record.ptr;
-//}
-//
-//int dlclose(void* handle)
-//{
-//    mcall_record record;
-//    INIT_RECORD(record);
-//    record.type = DLCLOSE_CALL;
-//    record.ptr = handle;
-//
-//    do_mcall(&record,nonused_va);
-//
-//    return record.rv;
-//}
+void* dlopen(const char* filename, int flag)
+{
+    mcall_record record;
+    INIT_RECORD(record);
+    record.type = DLOPEN_CALL;
+    record.dlopen_call.filename=filename;
+    record.dlopen_call.flag = flag;
+
+    do_mcall(&record,nonused_va);
+
+    return record.ptr;
+}
+
+int dlclose(void* handle)
+{
+    mcall_record record;
+    INIT_RECORD(record);
+    record.type = DLCLOSE_CALL;
+    record.ptr = handle;
+
+    do_mcall(&record,nonused_va);
+
+    return record.rv;
+}
 
 void* memalign(size_t boundary, size_t size)
 {
@@ -1100,8 +1105,6 @@ void* mremap(void *in_ptr, size_t in_size, size_t size, int flag,...)
     record.size = size;
     record.mremap_call.in_size = in_size;
     record.mremap_call.flag = flag;
-
-
 
     va_start(args, flag);
     do_mcall(&record,args);

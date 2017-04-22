@@ -45,12 +45,12 @@
 #define LOGFILE_LABEL		"log"
 #define START_LABEL		"start"
 #define LIMIT_LABEL		"limit"
-//#define RPID_LABEL      "rpid"
+#define RPID_LABEL      "rpid"
 #define RNAME_LABEL     "rname"
 
 #define ASSIGNMENT_CHAR     '='
 
-#define MGUARD_ENV_OPTION      "MGUARD_OPTION"
+#define MGUARD_ENV_OPTION      "MGUARD_OPT"
 #define MGUARD_ENV_LOG         "MGUARD_LOG"
 
 #define ASSIGNMENT_CHAR		'='
@@ -61,6 +61,7 @@ char *mguard_env_logpath=NULL;
 long env_opt_debug=0;
 size_t env_opt_rpid=0;
 char env_opt_rname[512]={0};
+int env_opt_remove_zero_called_btrace=0;
 
 
 
@@ -120,6 +121,7 @@ void env_setup_logpath(void)
 //    printf("env_logpath:%s\n",env_logpath);
 }
 
+extern void set_guarding_flag(int flag);
 static void    _dmalloc_envopt_process(const char *env_str)
 {
   char      *env_p, *this_p;
@@ -154,6 +156,7 @@ static void    _dmalloc_envopt_process(const char *env_str)
 
     *env_p = '\0';
 
+    printf("env=%s\n",env_str);
 //    len = strlen(ADDRESS_LABEL);
 //    if (strncmp(this_p, ADDRESS_LABEL, len) == 0
 //    && *(this_p + len) == ASSIGNMENT_CHAR) {
@@ -169,8 +172,8 @@ static void    _dmalloc_envopt_process(const char *env_str)
       SET_POINTER(debug_p, hex_to_long(this_p));
       continue;
     }
-    len = strlen(RNAME_LABEL);
-    if (strncmp(this_p, RNAME_LABEL, len) == 0
+    len = strlen(RPID_LABEL);
+    if (strncmp(this_p, RPID_LABEL, len) == 0
     && *(this_p + len) == ASSIGNMENT_CHAR) {
       this_p += len + 1;
       SET_POINTER(rpid_p, loc_atoul(this_p));
@@ -194,16 +197,18 @@ static void    _dmalloc_envopt_process(const char *env_str)
 //    }
 //
 
-    len = strlen(LOGFILE_LABEL);
+    len = strlen(RNAME_LABEL);
     if (strncmp(this_p, RNAME_LABEL, len) == 0
     && *(this_p + len) == ASSIGNMENT_CHAR) {
       this_p += len + 1;
       (void)strncpy(env_opt_rname, this_p, sizeof(env_opt_rname));
       env_opt_rname[sizeof(env_opt_rname) - 1] = '\0';
+      printf("[MGUARD] Track for process: %s\n",env_opt_rname);
+      set_guarding_flag(0);
       continue;
     }
 
-    printf("rname=%s, rpid=%d, debug=%d\n",env_opt_rname,env_opt_rpid,(int)env_opt_debug);
+//    printf("rname=%s, rpid=%d, debug=%d\n",env_opt_rname,env_opt_rpid,(int)env_opt_debug);
 
 //    /*
 //     * start checking the heap after X iterations OR
@@ -267,7 +272,8 @@ void env_load_option(void)
 
     if(option_str==NULL)
     {
-        printf("No MGUARD_OPTION is set!!\n");
+//        printf("No MGUARD_OPTION is set!!\n");
+        return;
 
     }
 
