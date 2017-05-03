@@ -14,7 +14,8 @@ class MSummary:
 
 
 def main():
-    ver='1.01'
+    ver=3
+    fstr=":X"
     inputFile=sys.argv[1]
     headers=1
     line_count=0
@@ -29,22 +30,24 @@ def main():
         line=line.strip()
 
         if line.startswith("MGUARD version '1.0'"):
-            ver='1.0'
+            ver=1
+        elif line.startswith("MGUARD version '1.01'"):
+            ver=2
+            fstr=":F"
 
-
-        if headers !=0 and ver=='1.01' and line.startswith("========@"):
+        if headers !=0 and ver>1 and line.startswith("========@"):
             out.write("\n")
-            out.write(':[TYPE]:[BACKTRACE_ID]:[TOTAL_UNFREED_SIZE]:[COUNT]:[BACKTRACE]'+"\n")
+            out.write(':[TYPE]:[BACKTRACE_ID]:[TOTAL_UNFREED_SIZE]:[XCOUNT]:[BACKTRACE]'+"\n")
             out.write(line+"\n")
             headers=0
-        elif headers!=0 and ver=='1.0' and line_count>=7:
+        elif headers!=0 and ver==1 and line_count>=7:
             out.write("\n")
             headers=0
 
         if headers:
             out.write(line+"\n")
 
-        if line.startswith(":F"):
+        if line.startswith(fstr):
             tokens=line.split(":")
             k=tokens[2].strip()
             smap[k]=tokens[6].strip()
@@ -52,9 +55,11 @@ def main():
 
     for line in open(inputFile):
         line=line.strip()
-        if line.startswith(":M"):
+        if line.startswith(":M") or (line.startswith(":F") and ver>2) :
             tokens=line.split(":")
             k=tokens[5].strip()
+            if ver>1 :
+                k=token[6].strip()
             m=None
             if not rmap.has_key(k):
                 m=MSummary()

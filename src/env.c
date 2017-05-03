@@ -62,6 +62,7 @@ long env_opt_debug=0;
 size_t env_opt_rpid=0;
 char env_opt_rname[512]={0};
 int env_opt_remove_zero_called_btrace=0;
+int env_opt_track=0;
 
 
 

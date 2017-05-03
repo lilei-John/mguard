@@ -201,12 +201,14 @@ struct backtrace_struct {
 	pid_t pid;
 	pid_t tid;
     void *stack[MAX_CALL_STACK_LEN];
+    unw_cursor_t *cursor[MAX_CALL_STACK_LEN];
     unsigned int cnt;
     UT_hash_handle hh; /* makes this structure hashable */
 };
 
 struct mcall_struct{
     size_t id;
+    int address_count;
     mcall_record record;
     UT_hash_handle hh; /* makes this structure hashable */
 };
@@ -238,6 +240,7 @@ static pthread_rwlock_t mcall_table_lock;
 extern void mguard_open_log(int sid,char *timestamp_str);
 extern void mguard_close_log(void);
 extern void env_setup_logpath(void);
+void do_unwind_backtrace(void);
 
 pid_t ourgetpid() {
   return syscall(SYS_getpid);
@@ -381,7 +384,14 @@ static void *report_job(void *arg)
         printf("\n[MGUARD]  Report_%d start @%s\n",sid,datetime);
         dmalloc_message("[MGUARD]Report_%d\n========@%s\n",sid,datetime);
         HASH_ITER(hh, mtable, rmst, rtmp) {
-          dmalloc_message(":M:0x%08X:%d:%02d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.type,rmst->record.backtrace_id);
+          if(rmst->record.type==FREE_CALL)
+          {
+              dmalloc_message(":F:0x%08X:%d:%02d:%d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.type,rmst->address_count,rmst->record.backtrace_id);
+          }
+          else
+          {
+              dmalloc_message(":M:0x%08X:%d:%02d:%d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.type,rmst->address_count,rmst->record.backtrace_id);
+          }
           i++;
         //          free(s->str);
         }
@@ -409,7 +419,7 @@ static void *report_job(void *arg)
                     HASH_FIND(hh,ubt_table,&bid,sizeof(size_t),ubt);
                     if(ubt==NULL)
                     {
-                        dmalloc_message_concat(":F:0x%08X:%d:%d:%d:",rbt->id,rbt->cnt,rbt->pid,rbt->tid);
+                        dmalloc_message_concat(":X:0x%08X:%d:%d:%d:",rbt->id,rbt->cnt,rbt->pid,rbt->tid);
                         i++;
                         for(j=0;j<MAX_CALL_STACK_LEN;j++)
                         {
@@ -469,15 +479,15 @@ static void *report_job(void *arg)
 static  void  signal_SIGNAL_handler(const int sig)
 {
     int rc;
+    pthread_attr_t attr;
     if(__sync_fetch_and_add(&generating_report,1))
     {
         __sync_fetch_and_sub(&generating_report,1);
         return;
     }
-    pthread_attr_t attr;
+
     pthread_attr_init (&attr);
     pthread_attr_setdetachstate (&attr, PTHREAD_CREATE_DETACHED);
-
     rc=pthread_create(&report_thread,&attr,report_job,(void *)&sig);
     if(rc!=0){
         printf("[MGUARD] report job thread create ERROR!! %d\n",rc);
@@ -510,6 +520,7 @@ bool is_pointer_valid(void *p) {
 extern char env_opt_rname[];
 extern size_t env_opt_rpid;
 extern int env_opt_remove_zero_called_btrace;
+extern int env_opt_track; //exclude with env_opt_remove_zero_called_btrace
 static int guarding_flag=1;
 void set_guarding_flag(int flag)
 {
@@ -549,7 +560,8 @@ static int should_be_guard(mcall_record *record)
     return guarding_flag;
 }
 
-//static size_t _Zncwj_addr=0;
+//static size_t _Znwj_addr=0;
+//static size_t _Znaj_addr=0;
 
 static void pre_guard(mcall_record *record) {
 
@@ -557,12 +569,15 @@ static void pre_guard(mcall_record *record) {
     unw_cursor_t cursor;
     unw_context_t uc;
     unw_word_t pc;
-//    unq_word offset;
-//    char        fname[64];
+    int _be_tracked=0;
+    unw_word_t offset=0;
+    char        fname[64];
     int ret;
     int i=0;
 
     struct backtrace_struct _bt={0};
+    offset=offset;
+    fname[0]=fname[0];
 
     unw_getcontext(&uc);
 
@@ -588,67 +603,133 @@ static void pre_guard(mcall_record *record) {
     {
         return;
     }
-    _bt.id+=(size_t)pc;
-    _bt.stack[0]=(void*)pc;
-    i++;
+
 
 #if 0
-    if(_Zncwj_addr==0)
+    if(_Znwj_addr==0)
     {
         fname[0] = '\0';
 
         unw_get_proc_name(&cursor, fname, sizeof(fname), &offset);
         if((fname[0]=='_' && fname[1]== 'Z' &&fname[2]=='n' && fname[3]=='w'))
         {
-            _Zncwj_addr=pc;
+            _Znwj_addr=pc;
             //        i++;
             //        printf ("===> %p : (%s+0x%x) [%d]\n", pc, fname, offset,record->malloc_call.size);
         }
     }
-    if(pc!=_Zncwj_addr)
+    if(pc!=_Znwj_addr)
     {
         return;
     }
+    _bt.id+=(size_t)pc;
+    _bt.stack[i]=(void*)pc;
+    _bt.cursor[i]=&cursor;
+    i++;
+
+    if( (unw_step(&cursor) <= 0) || unw_get_reg(&cursor, UNW_REG_IP, &pc) !=0 )
+    {
+        return;
+    }
+    if(_Znaj_addr==0)
+    {
+       fname[0] = '\0';
+
+       unw_get_proc_name(&cursor, fname, sizeof(fname), &offset);
+       if((fname[0]=='_' && fname[1]== 'Z' &&fname[2]=='n' && fname[3]=='a'))
+       {
+           _Znaj_addr=pc;
+           //        i++;
+           //        printf ("===> %p : (%s+0x%x) [%d]\n", pc, fname, offset,record->malloc_call.size);
+       }
+    }
+    if(pc!=_Znaj_addr)
+    {
+       return;
+    }
+
 
 #endif
+    _bt.id+=(size_t)pc;
+    _bt.stack[i]=(void*)pc;
+    _bt.cursor[i]=&cursor;
+    i++;
+
 //    //
-        while (1) {
-            if( (unw_step(&cursor) <= 0) || (i >= MAX_CALL_STACK_LEN))
-            {
-                break;
-            }
-
-            if((ret=unw_get_reg(&cursor, UNW_REG_IP, &pc))!=0)
-            {
-                break;
-            }
-            if(pc==0)
-            {
-                break;
-            }
-            _bt.stack[i]=(void*)pc;
-            _bt.id+=(size_t)pc;
-            i++;
-
-        }
-        if(i!=0)
+    while (1) {
+        if( (unw_step(&cursor) <= 0) || (i >= MAX_CALL_STACK_LEN))
         {
-            //printf("\n");
-            struct backtrace_struct *tbt=NULL;
-            if (pthread_rwlock_wrlock(&btrace_table_lock) != 0) MERR;
-            HASH_FIND(hh,btrace,&_bt.id,sizeof(size_t),tbt);
-            if(tbt==NULL)
-            {
-                tbt=uthash_malloc(sizeof(struct backtrace_struct));
-                memcpy(tbt,&_bt,sizeof(struct backtrace_struct));
-                HASH_ADD(hh,btrace,id,sizeof(size_t),tbt);
-
-            }
-            tbt->cnt++;
-
-            pthread_rwlock_unlock(&btrace_table_lock);
+            break;
         }
-        record->backtrace_id=_bt.id;
+
+        if((ret=unw_get_reg(&cursor, UNW_REG_IP, &pc))!=0)
+        {
+            break;
+        }
+        if(pc==0)
+        {
+            break;
+        }
+
+        _bt.id+=(size_t)pc;
+        _bt.stack[i]=(void*)pc;
+        _bt.cursor[i]=&cursor;
+#if 0
+           if(2==i)
+           {
+               unw_get_proc_name(&cursor, fname, sizeof(fname), &offset);
+               if(   0==strncmp(fname,"_ZN12CSndLossList6insertERKiS1_",sizeof("_ZN12CSndLossList6insertERKiS1_"))
+                  || 0==strncmp(fname,"_ZN10CRcvBufferC2ERKiP10CUnitQueue",sizeof("_ZN10CRcvBufferC2ERKiP10CUnitQueue"))
+                  || 0==strncmp(fname,"_ZN10CACKWindowC2ERKi",sizeof("_ZN10CACKWindowC2ERKi"))
+                  || 0==strncmp(fname,"_ZN10CSndBuffer8increaseEv",sizeof("_ZN10CSndBuffer8increaseEv"))
+               )
+               {
+                   _be_tracked=1;
+               }
+           }
+#endif
+        i++;
+
+    }
+    if(FREE_CALL==record->type) _be_tracked=1;
+
+    if(i!=0 && (0==env_opt_track || _be_tracked >0) )
+    {
+        //printf("\n");
+        struct backtrace_struct *tbt=NULL;
+        if (pthread_rwlock_wrlock(&btrace_table_lock) != 0) MERR;
+        HASH_FIND(hh,btrace,&_bt.id,sizeof(size_t),tbt);
+        if(tbt==NULL)
+        {
+            tbt=uthash_malloc(sizeof(struct backtrace_struct));
+            memcpy(tbt,&_bt,sizeof(struct backtrace_struct));
+            HASH_ADD(hh,btrace,id,sizeof(size_t),tbt);
+#if 0
+
+           {
+               unw_get_proc_name(_bt->cursor[2], fname, sizeof(fname), &offset);
+               if(   0==strncmp(fname,"_ZN12CSndLossList6insertERKiS1_",sizeof("_ZN12CSndLossList6insertERKiS1_"))
+                  || 0==strncmp(fname,"_ZN10CRcvBufferC2ERKiP10CUnitQueue",sizeof("_ZN10CRcvBufferC2ERKiP10CUnitQueue"))
+                  || 0==strncmp(fname,"_ZN10CACKWindowC2ERKi",sizeof("_ZN10CACKWindowC2ERKi"))
+                  || 0==strncmp(fname,"_ZN10CSndBuffer8increaseEv",sizeof("_ZN10CSndBuffer8increaseEv"))
+               )
+               {
+                   _be_tracked=1;
+               }
+           }
+#endif
+
+        }
+        tbt->cnt++;
+
+        pthread_rwlock_unlock(&btrace_table_lock);
+    }
+    record->backtrace_id=_bt.id;
+
+    if(env_opt_track > 0 && 0==_be_tracked)
+    {
+        record->backtrace_id=0;
+    }
 
 }
 
@@ -664,7 +745,7 @@ void post_guard(mcall_record* record)
         case CALLOC_CALL:
         case REALLOC_CALL:
         {
-            goto UPDATE_RECORD;
+            goto ADD_MTABLE_RECORD;
         }
         break;
 
@@ -681,9 +762,10 @@ void post_guard(mcall_record* record)
             }
             else
             {
-
+                //when env_opt_track is enabled, env_opt_remove_zero_called_btrace must be '0'
                 if(env_opt_remove_zero_called_btrace>0 && mst->record.backtrace_id!=0)
                 {
+
                     struct backtrace_struct *tbt=NULL;
                     HASH_FIND(hh,btrace,&(mst->record.backtrace_id),sizeof(size_t),tbt);
                     if(tbt!=NULL)
@@ -696,9 +778,34 @@ void post_guard(mcall_record* record)
                         }
                     }
                 }
-                HASH_DELETE(hh,mcall_table,mst);
-                uthash_free(mst,sizeof(struct mcall_struct));
-                mst=NULL;
+
+                if(env_opt_track>0 && record->backtrace_id!=0)
+                {
+                    struct mcall_struct *fst;
+                    size_t fid;
+                    fid=mid+1;
+                    HASH_FIND(hh,mcall_table,&fid,sizeof(size_t),fst);
+                    if(fst!=NULL)
+                    {
+                        fst->address_count+=1;
+                        fst->record.size+=record->size;
+                    }
+                    else
+                    {
+                        fst=uthash_malloc(sizeof(struct mcall_struct));
+                        memcpy(&fst->record,record,sizeof(mcall_record));
+                        fst->id=fid;
+                        fst->address_count=1;
+                        HASH_ADD(hh,mcall_table,id,sizeof(size_t),fst);
+                    }
+
+                }
+                else
+                {
+                    HASH_DELETE(hh,mcall_table,mst);
+                    uthash_free(mst,sizeof(struct mcall_struct));
+                    mst=NULL;
+                }
 
             }
             pthread_rwlock_unlock(&mcall_table_lock);
@@ -711,7 +818,7 @@ void post_guard(mcall_record* record)
     }
 
 
-UPDATE_RECORD:
+ADD_MTABLE_RECORD:
     if(record->backtrace_id!=0 && record->ptr!=NULL){
 
            //printf("\n");
@@ -728,7 +835,18 @@ UPDATE_RECORD:
                }
                else
                {
-                   printf("!!!!! [MGUARD] NOT NULL 0x%08X,%d %d !!!!\n",mst->id,mst->record.type,record->type);
+
+                   if(env_opt_track)
+                   {
+                       mst->address_count+=1;
+                       mst->record.size+=record->size;
+
+                   }
+                   else
+                   {
+                       printf("!!!!! [MGUARD] NOT NULL 0x%08X,%d %d !!!!\n",mst->id,mst->record.type,record->type);
+                   }
+
                }
 
            }
@@ -737,6 +855,7 @@ UPDATE_RECORD:
                mst=uthash_malloc(sizeof(struct mcall_struct));
                memcpy(&mst->record,record,sizeof(mcall_record));
                mst->id=mid;
+               mst->address_count=1;
                HASH_ADD(hh,mcall_table,id,sizeof(size_t),mst);
                //
            }
