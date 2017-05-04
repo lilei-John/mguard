@@ -1,7 +1,7 @@
 # Makefile template for shared library
 
 UNWIND_DIR=$(shell pwd)/libunwind/build
-CC = arm-linux-gnueabihf-gcc # C compiler
+CC = arm-linux-gnueabihf-g++ # C compiler
 CFLAGS = -I${UNWIND_DIR}/include -Iinclude -fPIC -Wall -Wextra -g -fstack-protector -U_FORTIFY_SOURCE# C flags
 LDFLAGS = -shared  -fPIC
 #LDFLAGS += -L${UNWIND_DIR}/lib

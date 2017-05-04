@@ -1,4 +1,4 @@
-#define _GNU_SOURCE
+//#define _GNU_SOURCE
 #include <dlfcn.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -233,7 +233,7 @@ static int forked=0;
 long mguard_opt_debug=(OPT_DBG_NO_TRACK_DLOPEN|OPT_DBG_NO_TRACK_MEMALIGN);
 size_t mguard_opt_rpid=0;
 
-static pthread_t report_thread=NULL;
+static pthread_t report_thread=0;
 static int generating_report=0;
 static pthread_rwlock_t btrace_table_lock;
 static pthread_rwlock_t mcall_table_lock;
@@ -286,7 +286,7 @@ static void* dummy_calloc(size_t nmemb, size_t size) {
     void *ptr = dummy_malloc(nmemb * size);
     unsigned int i = 0;
     for (; i < nmemb * size; ++i)
-        *((char*)(ptr + i)) = '\0';
+        ((char*)ptr )[i] = '\0';
     return ptr;
 }
 
@@ -298,7 +298,7 @@ static void report_meminfo()
     size_t len = 1024;
     char *buf=NULL;
     char* buffer = (char*)malloc( 1024 );
-    char *file="/proc/meminfo";
+    char file[]="/proc/meminfo";
     char content[16]="";
     fp = fopen(file, "rb");
     if (fp == NULL)
@@ -369,7 +369,7 @@ static void *report_job(void *arg)
     if (pthread_rwlock_rdlock(&mcall_table_lock) != 0) MERR;
     HASH_ITER(hh, mcall_table, rmst, rtmp) {
 
-        struct mcall_struct *mst=uthash_malloc(sizeof(struct mcall_struct));
+        struct mcall_struct *mst=(struct mcall_struct *)uthash_malloc(sizeof(struct mcall_struct));
         memcpy(&mst->record,&rmst->record,sizeof(mcall_record));
         mst->id=rmst->id;
         HASH_ADD(hh,mtable,id,sizeof(size_t),mst);
@@ -439,7 +439,7 @@ static void *report_job(void *arg)
 
                         }
                         dmalloc_message_concat("\n");
-                        ubt=uthash_malloc(sizeof(struct hash_id_struct));
+                        ubt=(struct hash_id_struct *)uthash_malloc(sizeof(struct hash_id_struct));
                         ubt->id=bid;
                         HASH_ADD(hh,ubt_table,id,sizeof(size_t),ubt);
 
@@ -575,7 +575,7 @@ static void pre_guard(mcall_record *record) {
     int ret;
     int i=0;
 
-    struct backtrace_struct _bt={0};
+    struct backtrace_struct _bt;
     offset=offset;
     fname[0]=fname[0];
 
@@ -657,7 +657,6 @@ static void pre_guard(mcall_record *record) {
     _bt.cursor[i]=&cursor;
     i++;
 
-//    //
     while (1) {
         if( (unw_step(&cursor) <= 0) || (i >= MAX_CALL_STACK_LEN))
         {
@@ -676,20 +675,6 @@ static void pre_guard(mcall_record *record) {
         _bt.id+=(size_t)pc;
         _bt.stack[i]=(void*)pc;
         _bt.cursor[i]=&cursor;
-#if 0
-           if(2==i)
-           {
-               unw_get_proc_name(&cursor, fname, sizeof(fname), &offset);
-               if(   0==strncmp(fname,"_ZN12CSndLossList6insertERKiS1_",sizeof("_ZN12CSndLossList6insertERKiS1_"))
-                  || 0==strncmp(fname,"_ZN10CRcvBufferC2ERKiP10CUnitQueue",sizeof("_ZN10CRcvBufferC2ERKiP10CUnitQueue"))
-                  || 0==strncmp(fname,"_ZN10CACKWindowC2ERKi",sizeof("_ZN10CACKWindowC2ERKi"))
-                  || 0==strncmp(fname,"_ZN10CSndBuffer8increaseEv",sizeof("_ZN10CSndBuffer8increaseEv"))
-               )
-               {
-                   _bt->tracked=1;
-               }
-           }
-#endif
         i++;
 
     }
@@ -703,26 +688,42 @@ static void pre_guard(mcall_record *record) {
         HASH_FIND(hh,btrace,&_bt.id,sizeof(size_t),tbt);
         if(tbt==NULL)
         {
-#if 0 //filter out non necessary btrace in track mode
-           if(FREE_CALL!=record->type) _bt.tracked=0;
+#if 1 // customized track filter for SZ JOVI OOM
+            if(FREE_CALL!=record->type)
+            {
+                _bt.tracked=0;
+            }
 
-           {
-               unw_get_proc_name(_bt.cursor[2], fname, sizeof(fname), &offset);
-               if(   0==strncmp(fname,"_ZN12CSndLossList6insertERKiS1_",sizeof("_ZN12CSndLossList6insertERKiS1_"))
-                  || 0==strncmp(fname,"_ZN10CRcvBufferC2ERKiP10CUnitQueue",sizeof("_ZN10CRcvBufferC2ERKiP10CUnitQueue"))
-                  || 0==strncmp(fname,"_ZN10CACKWindowC2ERKi",sizeof("_ZN10CACKWindowC2ERKi"))
-                  || 0==strncmp(fname,"_ZN10CSndBuffer8increaseEv",sizeof("_ZN10CSndBuffer8increaseEv"))
-               )
-               {
-                   printf("captured!!\n");
-                   _bt.tracked=1;
-               }
-           }
+            if(_bt.tracked!=0)
+            {
+                int h=0;
+                unw_cursor_t cursor2;
+                unw_context_t uc2;
+                unw_getcontext(&uc2);
+                if(unw_init_local(&cursor2, &uc2)==0)
+                {
+                    for(h=0;h<5;h++) if( (unw_step(&cursor2) <= 0))break;
+                    if(5==h)
+                    {
+                        memset(fname,0,sizeof(fname));
+
+                        unw_get_proc_name(&cursor2, fname, sizeof(fname), &offset);
+                        if(   0!=strncmp(fname,"_ZN12CSndLossList6insertERKiS1_",sizeof("_ZN12CSndLossList6insertERKiS1_"))
+                              || 0!=strncmp(fname,"_ZN10CRcvBufferC2ERKiP10CUnitQueue",sizeof("_ZN10CRcvBufferC2ERKiP10CUnitQueue"))
+                              || 0!=strncmp(fname,"_ZN10CACKWindowC2ERKi",sizeof("_ZN10CACKWindowC2ERKi"))
+                              || 0!=strncmp(fname,"_ZN10CSndBuffer8increaseEv",sizeof("_ZN10CSndBuffer8increaseEv"))
+                           )
+                        {
+                            _bt.tracked=0;
+                        }
+                    }
+                 }
+            }
 #endif
 
            if (0==env_opt_track || _bt.tracked >0)
            {
-               tbt=uthash_malloc(sizeof(struct backtrace_struct));
+               tbt=(struct backtrace_struct*)uthash_malloc(sizeof(struct backtrace_struct));
                memcpy(tbt,&_bt,sizeof(struct backtrace_struct));
                HASH_ADD(hh,btrace,id,sizeof(size_t),tbt);
                tbt->cnt=1;
@@ -805,7 +806,7 @@ void post_guard(mcall_record* record)
                     }
                     else
                     {
-                        fst=uthash_malloc(sizeof(struct mcall_struct));
+                        fst=(struct mcall_struct*)uthash_malloc(sizeof(struct mcall_struct));
                         memcpy(&fst->record,record,sizeof(mcall_record));
                         fst->id=fid;
                         fst->address_cnt=1;
@@ -865,7 +866,7 @@ ADD_MTABLE_RECORD:
            }
            else
            {
-               mst=uthash_malloc(sizeof(struct mcall_struct));
+               mst=(struct mcall_struct*)uthash_malloc(sizeof(struct mcall_struct));
                memcpy(&mst->record,record,sizeof(mcall_record));
                mst->id=mid;
                mst->address_cnt=1;
@@ -914,21 +915,21 @@ static void  hookfns()
 
         pthread_atfork(&prepare_fork, &parent_fork, &child_fork);
 
-        temp_malloc         = dlsym(RTLD_NEXT, "malloc");
-        temp_calloc         = dlsym(RTLD_NEXT, "calloc");
-        temp_realloc        = dlsym(RTLD_NEXT, "realloc");
-        temp_free           = dlsym(RTLD_NEXT, "free");
+        temp_malloc         = (void* (*)(size_t))dlsym(RTLD_NEXT, "malloc");
+        temp_calloc         = (void* (*)(size_t, size_t))dlsym(RTLD_NEXT, "calloc");
+        temp_realloc        = (void* (*)(void*, size_t))dlsym(RTLD_NEXT, "realloc");
+        temp_free           = (void (*)(void*))dlsym(RTLD_NEXT, "free");
 
-        temp_memalign       = dlsym(RTLD_NEXT, "memalign");
-        temp_valloc         = dlsym(RTLD_NEXT, "valloc");
-        temp_posix_memalign = dlsym(RTLD_NEXT, "posix_memalign");
+        temp_memalign       = (void* (*)(size_t, size_t))dlsym(RTLD_NEXT, "memalign");
+        temp_valloc         = (void* (*)(size_t))dlsym(RTLD_NEXT, "valloc");
+        temp_posix_memalign = (int (*)(void**, size_t, size_t))dlsym(RTLD_NEXT, "posix_memalign");
 
-        temp_mmap           = dlsym(RTLD_NEXT, "mmap");
-        temp_mremap         = dlsym(RTLD_NEXT, "mremap");
-        temp_munmap         = dlsym(RTLD_NEXT, "munmap");
+        temp_mmap           = (void* (*)(void*, size_t, int, int, int, off_t))dlsym(RTLD_NEXT, "mmap");
+        temp_mremap         = (void* (*)(void*, size_t, size_t, int, ...))dlsym(RTLD_NEXT, "mremap");
+        temp_munmap         = (int (*)(void*, size_t))dlsym(RTLD_NEXT, "munmap");
 
-        temp_dlopen         = dlsym(RTLD_NEXT, "dlopen");
-        temp_dlclose        = dlsym(RTLD_NEXT, "dlclose");
+        temp_dlopen         = (void* (*)(const char*, int))dlsym(RTLD_NEXT, "dlopen");
+        temp_dlclose        = (int (*)(void*))dlsym(RTLD_NEXT, "dlclose");
 
         if (!temp_malloc || !temp_calloc || !temp_realloc || !temp_memalign ||
             !temp_valloc || !temp_posix_memalign || !temp_free || !temp_mmap || !temp_mremap || !temp_munmap || !temp_dlopen || !temp_dlclose )
@@ -1094,7 +1095,7 @@ static void do_mcall(mcall_record *record,va_list args) {
     call_end();
 
 }
-static const va_list nonused_va;
+static va_list nonused_va;
 
 void* malloc(size_t size)
 {
