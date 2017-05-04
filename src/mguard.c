@@ -703,7 +703,7 @@ static void pre_guard(mcall_record *record) {
         HASH_FIND(hh,btrace,&_bt.id,sizeof(size_t),tbt);
         if(tbt==NULL)
         {
-#if 1 //filter out non necessary btrace in track mode
+#if 0 //filter out non necessary btrace in track mode
            if(FREE_CALL!=record->type) _bt.tracked=0;
 
            {
