@@ -716,6 +716,10 @@ static void pre_guard(mcall_record *record) {
                         {
                             _bt.tracked=0;
                         }
+                        else
+                        {
+                            printf("captured!!\n");
+                        }
                     }
                  }
             }
@@ -723,6 +727,7 @@ static void pre_guard(mcall_record *record) {
 
            if (0==env_opt_track || _bt.tracked >0)
            {
+               printf("btrace added!!\n");
                tbt=(struct backtrace_struct*)uthash_malloc(sizeof(struct backtrace_struct));
                memcpy(tbt,&_bt,sizeof(struct backtrace_struct));
                HASH_ADD(hh,btrace,id,sizeof(size_t),tbt);
@@ -810,12 +815,14 @@ void post_guard(mcall_record* record)
                         memcpy(&fst->record,record,sizeof(mcall_record));
                         fst->id=fid;
                         fst->address_cnt=1;
+                        printf("free added!!\n");
                         HASH_ADD(hh,mcall_table,id,sizeof(size_t),fst);
                     }
 
                 }
                 else
                 {
+                    printf("freed!!\n");
                     HASH_DELETE(hh,mcall_table,mst);
                     uthash_free(mst,sizeof(struct mcall_struct));
                     mst=NULL;
@@ -871,6 +878,7 @@ ADD_MTABLE_RECORD:
                mst->id=mid;
                mst->address_cnt=1;
                HASH_ADD(hh,mcall_table,id,sizeof(size_t),mst);
+               printf("added!!\n");
                //
            }
            pthread_rwlock_unlock(&mcall_table_lock);
