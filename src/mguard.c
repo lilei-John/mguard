@@ -688,13 +688,22 @@ static void pre_guard(mcall_record *record) {
         HASH_FIND(hh,btrace,&_bt.id,sizeof(size_t),tbt);
         if(tbt==NULL)
         {
-#if 1 // customized track filter for SZ JOVI OOM
+#if 0 // customized track filter for SZ JOVI OOM
             if(FREE_CALL!=record->type)
             {
                 _bt.tracked=0;
             }
+//            else
+//            {
+//                struct mcall_struct *sst=NULL;
+//                size_t sid=(size_t)record->ptr;
+//
+//                HASH_FIND(hh,mcall_table,&sid,sizeof(size_t),sst);
+//
+//                if(sst==NULL) _bt.tracked=0;
+//            }
 
-            if(_bt.tracked!=0)
+            if(_bt.tracked==0)
             {
                 int h=0;
                 unw_cursor_t cursor2;
@@ -702,24 +711,22 @@ static void pre_guard(mcall_record *record) {
                 unw_getcontext(&uc2);
                 if(unw_init_local(&cursor2, &uc2)==0)
                 {
-                    for(h=0;h<5;h++) if( (unw_step(&cursor2) <= 0))break;
+                    for(h=0;h<5;h++){ if( (unw_step(&cursor2) <= 0))break;}
                     if(5==h)
                     {
                         memset(fname,0,sizeof(fname));
 
                         unw_get_proc_name(&cursor2, fname, sizeof(fname), &offset);
-                        if(   0!=strncmp(fname,"_ZN12CSndLossList6insertERKiS1_",sizeof("_ZN12CSndLossList6insertERKiS1_"))
-                              || 0!=strncmp(fname,"_ZN10CRcvBufferC2ERKiP10CUnitQueue",sizeof("_ZN10CRcvBufferC2ERKiP10CUnitQueue"))
-                              || 0!=strncmp(fname,"_ZN10CACKWindowC2ERKi",sizeof("_ZN10CACKWindowC2ERKi"))
-                              || 0!=strncmp(fname,"_ZN10CSndBuffer8increaseEv",sizeof("_ZN10CSndBuffer8increaseEv"))
+                        if(   0==strncmp(fname,"_ZN12CSndLossList6insertERKiS1_",sizeof("_ZN12CSndLossList6insertERKiS1_"))
+                              || 0==strncmp(fname,"_ZN10CRcvBufferC2ERKiP10CUnitQueue",sizeof("_ZN10CRcvBufferC2ERKiP10CUnitQueue"))
+                              || 0==strncmp(fname,"_ZN10CACKWindowC2ERKi",sizeof("_ZN10CACKWindowC2ERKi"))
+                              || 0==strncmp(fname,"_ZN10CSndBuffer8increaseEv",sizeof("_ZN10CSndBuffer8increaseEv"))
                            )
                         {
-                            _bt.tracked=0;
-                        }
-                        else
-                        {
                             printf("captured!!\n");
+                            _bt.tracked=1;
                         }
+
                     }
                  }
             }
@@ -727,7 +734,7 @@ static void pre_guard(mcall_record *record) {
 
            if (0==env_opt_track || _bt.tracked >0)
            {
-               printf("btrace added!!\n");
+//               printf("btrace added!!\n");
                tbt=(struct backtrace_struct*)uthash_malloc(sizeof(struct backtrace_struct));
                memcpy(tbt,&_bt,sizeof(struct backtrace_struct));
                HASH_ADD(hh,btrace,id,sizeof(size_t),tbt);
@@ -815,14 +822,14 @@ void post_guard(mcall_record* record)
                         memcpy(&fst->record,record,sizeof(mcall_record));
                         fst->id=fid;
                         fst->address_cnt=1;
-                        printf("free added!!\n");
+                        //printf("free added!!\n");
                         HASH_ADD(hh,mcall_table,id,sizeof(size_t),fst);
                     }
 
                 }
                 else
                 {
-                    printf("freed!!\n");
+                    //printf("freed!!\n");
                     HASH_DELETE(hh,mcall_table,mst);
                     uthash_free(mst,sizeof(struct mcall_struct));
                     mst=NULL;
@@ -878,7 +885,7 @@ ADD_MTABLE_RECORD:
                mst->id=mid;
                mst->address_cnt=1;
                HASH_ADD(hh,mcall_table,id,sizeof(size_t),mst);
-               printf("added!!\n");
+               //printf("added!!\n");
                //
            }
            pthread_rwlock_unlock(&mcall_table_lock);

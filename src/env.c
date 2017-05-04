@@ -266,7 +266,6 @@ static void    _dmalloc_envopt_process(const char *env_str)
 //    }
 //  }
 
-
 }
 
 void env_load_option(void)
