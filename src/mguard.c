@@ -203,12 +203,13 @@ struct backtrace_struct {
     void *stack[MAX_CALL_STACK_LEN];
     unw_cursor_t *cursor[MAX_CALL_STACK_LEN];
     unsigned int cnt;
+    unsigned int tracked;
     UT_hash_handle hh; /* makes this structure hashable */
 };
 
 struct mcall_struct{
     size_t id;
-    int address_count;
+    int address_cnt;
     mcall_record record;
     UT_hash_handle hh; /* makes this structure hashable */
 };
@@ -386,11 +387,11 @@ static void *report_job(void *arg)
         HASH_ITER(hh, mtable, rmst, rtmp) {
           if(rmst->record.type==FREE_CALL)
           {
-              dmalloc_message(":F:0x%08X:%d:%02d:%d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.type,rmst->address_count,rmst->record.backtrace_id);
+              dmalloc_message(":F:0x%08X:%d:%02d:%d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.type,rmst->address_cnt,rmst->record.backtrace_id);
           }
           else
           {
-              dmalloc_message(":M:0x%08X:%d:%02d:%d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.type,rmst->address_count,rmst->record.backtrace_id);
+              dmalloc_message(":M:0x%08X:%d:%02d:%d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.type,rmst->address_cnt,rmst->record.backtrace_id);
           }
           i++;
         //          free(s->str);
@@ -520,7 +521,7 @@ bool is_pointer_valid(void *p) {
 extern char env_opt_rname[];
 extern size_t env_opt_rpid;
 extern int env_opt_remove_zero_called_btrace;
-extern int env_opt_track; //exclude with env_opt_remove_zero_called_btrace
+extern int env_opt_track;
 static int guarding_flag=1;
 void set_guarding_flag(int flag)
 {
@@ -569,7 +570,6 @@ static void pre_guard(mcall_record *record) {
     unw_cursor_t cursor;
     unw_context_t uc;
     unw_word_t pc;
-    int _be_tracked=0;
     unw_word_t offset=0;
     char        fname[64];
     int ret;
@@ -590,6 +590,8 @@ static void pre_guard(mcall_record *record) {
     _bt.tid=ourgettid();
     _bt.pid=ourgetpid();
     _bt.id=_bt.pid;
+    _bt.tracked=0;
+    if(env_opt_track)_bt.tracked=1;
 
     if( (unw_step(&cursor) <= 0))
     {
@@ -684,16 +686,16 @@ static void pre_guard(mcall_record *record) {
                   || 0==strncmp(fname,"_ZN10CSndBuffer8increaseEv",sizeof("_ZN10CSndBuffer8increaseEv"))
                )
                {
-                   _be_tracked=1;
+                   _bt->tracked=1;
                }
            }
 #endif
         i++;
 
     }
-    if(FREE_CALL==record->type) _be_tracked=1;
 
-    if(i!=0 && (0==env_opt_track || _be_tracked >0) )
+
+    if(i!=0)
     {
         //printf("\n");
         struct backtrace_struct *tbt=NULL;
@@ -701,32 +703,43 @@ static void pre_guard(mcall_record *record) {
         HASH_FIND(hh,btrace,&_bt.id,sizeof(size_t),tbt);
         if(tbt==NULL)
         {
-            tbt=uthash_malloc(sizeof(struct backtrace_struct));
-            memcpy(tbt,&_bt,sizeof(struct backtrace_struct));
-            HASH_ADD(hh,btrace,id,sizeof(size_t),tbt);
-#if 0
+#if 1 //filter out non necessary btrace in track mode
+           if(FREE_CALL!=record->type) _bt.tracked=0;
 
            {
-               unw_get_proc_name(_bt->cursor[2], fname, sizeof(fname), &offset);
+               unw_get_proc_name(_bt.cursor[2], fname, sizeof(fname), &offset);
                if(   0==strncmp(fname,"_ZN12CSndLossList6insertERKiS1_",sizeof("_ZN12CSndLossList6insertERKiS1_"))
                   || 0==strncmp(fname,"_ZN10CRcvBufferC2ERKiP10CUnitQueue",sizeof("_ZN10CRcvBufferC2ERKiP10CUnitQueue"))
                   || 0==strncmp(fname,"_ZN10CACKWindowC2ERKi",sizeof("_ZN10CACKWindowC2ERKi"))
                   || 0==strncmp(fname,"_ZN10CSndBuffer8increaseEv",sizeof("_ZN10CSndBuffer8increaseEv"))
                )
                {
-                   _be_tracked=1;
+                   printf("captured!!\n");
+                   _bt.tracked=1;
                }
            }
 #endif
 
+           if (0==env_opt_track || _bt.tracked >0)
+           {
+               tbt=uthash_malloc(sizeof(struct backtrace_struct));
+               memcpy(tbt,&_bt,sizeof(struct backtrace_struct));
+               HASH_ADD(hh,btrace,id,sizeof(size_t),tbt);
+               tbt->cnt=1;
+           }
+
         }
-        tbt->cnt++;
+        else
+        {
+            tbt->cnt++;
+        }
+
 
         pthread_rwlock_unlock(&btrace_table_lock);
     }
     record->backtrace_id=_bt.id;
 
-    if(env_opt_track > 0 && 0==_be_tracked)
+    if(env_opt_track > 0 && 0==_bt.tracked)
     {
         record->backtrace_id=0;
     }
@@ -762,7 +775,7 @@ void post_guard(mcall_record* record)
             }
             else
             {
-                //when env_opt_track is enabled, env_opt_remove_zero_called_btrace must be '0'
+
                 if(env_opt_remove_zero_called_btrace>0 && mst->record.backtrace_id!=0)
                 {
 
@@ -770,7 +783,7 @@ void post_guard(mcall_record* record)
                     HASH_FIND(hh,btrace,&(mst->record.backtrace_id),sizeof(size_t),tbt);
                     if(tbt!=NULL)
                     {
-                        if(0==(--tbt->cnt))
+                        if(0==(--tbt->cnt) && (env_opt_track == 0 || 0==tbt->tracked))
                         {
                             HASH_DELETE(hh,btrace,tbt);
                             uthash_free(tbt,sizeof(struct backtrace_struct));
@@ -787,7 +800,7 @@ void post_guard(mcall_record* record)
                     HASH_FIND(hh,mcall_table,&fid,sizeof(size_t),fst);
                     if(fst!=NULL)
                     {
-                        fst->address_count+=1;
+                        fst->address_cnt+=1;
                         fst->record.size+=record->size;
                     }
                     else
@@ -795,7 +808,7 @@ void post_guard(mcall_record* record)
                         fst=uthash_malloc(sizeof(struct mcall_struct));
                         memcpy(&fst->record,record,sizeof(mcall_record));
                         fst->id=fid;
-                        fst->address_count=1;
+                        fst->address_cnt=1;
                         HASH_ADD(hh,mcall_table,id,sizeof(size_t),fst);
                     }
 
@@ -838,7 +851,7 @@ ADD_MTABLE_RECORD:
 
                    if(env_opt_track)
                    {
-                       mst->address_count+=1;
+                       mst->address_cnt+=1;
                        mst->record.size+=record->size;
 
                    }
@@ -855,7 +868,7 @@ ADD_MTABLE_RECORD:
                mst=uthash_malloc(sizeof(struct mcall_struct));
                memcpy(&mst->record,record,sizeof(mcall_record));
                mst->id=mid;
-               mst->address_count=1;
+               mst->address_cnt=1;
                HASH_ADD(hh,mcall_table,id,sizeof(size_t),mst);
                //
            }

@@ -47,6 +47,7 @@
 #define LIMIT_LABEL		"limit"
 #define RPID_LABEL      "rpid"
 #define RNAME_LABEL     "rname"
+#define TRACK_LABEL      "track"
 
 #define ASSIGNMENT_CHAR     '='
 
@@ -130,6 +131,7 @@ static void    _dmalloc_envopt_process(const char *env_str)
   int       len, done_b = 0;
   long *debug_p=&env_opt_debug;
   size_t* rpid_p=&env_opt_rpid;
+  int *track_p=&env_opt_track;
 
   /* make a copy */
   (void)strncpy(buf, env_str, sizeof(buf));
@@ -173,6 +175,15 @@ static void    _dmalloc_envopt_process(const char *env_str)
       SET_POINTER(debug_p, hex_to_long(this_p));
       continue;
     }
+
+    len = strlen(TRACK_LABEL);
+    if (strncmp(this_p, TRACK_LABEL, len) == 0
+    && *(this_p + len) == ASSIGNMENT_CHAR) {
+      this_p += len + 1;
+      SET_POINTER(track_p, (int)hex_to_long(this_p));
+      continue;
+    }
+
     len = strlen(RPID_LABEL);
     if (strncmp(this_p, RPID_LABEL, len) == 0
     && *(this_p + len) == ASSIGNMENT_CHAR) {
@@ -254,6 +265,8 @@ static void    _dmalloc_envopt_process(const char *env_str)
 //      *debug_p |= flags;
 //    }
 //  }
+
+
 }
 
 void env_load_option(void)
