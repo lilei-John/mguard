@@ -141,7 +141,7 @@ typedef enum {
 }mcall_type ;
 
 typedef struct {
-    mcall_type type;
+    mcall_type mtype;
     size_t size;
     void* ptr;
     int rv;
@@ -200,8 +200,8 @@ struct backtrace_struct {
 	size_t id;            /* we'll use this field as the key */
 	pid_t pid;
 	pid_t tid;
+	mcall_type mtype;
     void *stack[MAX_CALL_STACK_LEN];
-    unw_cursor_t *cursor[MAX_CALL_STACK_LEN];
     unsigned int cnt;
     unsigned int tracked;
     UT_hash_handle hh; /* makes this structure hashable */
@@ -372,6 +372,7 @@ static void *report_job(void *arg)
         struct mcall_struct *mst=(struct mcall_struct *)uthash_malloc(sizeof(struct mcall_struct));
         memcpy(&mst->record,&rmst->record,sizeof(mcall_record));
         mst->id=rmst->id;
+        mst->address_cnt=rmst->address_cnt;
         HASH_ADD(hh,mtable,id,sizeof(size_t),mst);
     }
     pthread_rwlock_unlock(&mcall_table_lock);
@@ -384,19 +385,20 @@ static void *report_job(void *arg)
 
         printf("\n[MGUARD]  Report_%d start @%s\n",sid,datetime);
         dmalloc_message("[MGUARD]Report_%d\n========@%s\n",sid,datetime);
+        dmalloc_message(":[TYPE]:[MEM_PTR]:[TOTAL_SIZE]:[MCALL_TYPE]:[ADDRESS_COUNT]:[BACKTRACE_ID]\n");
         HASH_ITER(hh, mtable, rmst, rtmp) {
-          if(rmst->record.type==FREE_CALL)
+          if(rmst->record.mtype==FREE_CALL)
           {
-              dmalloc_message(":F:0x%08X:%d:%02d:%d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.type,rmst->address_cnt,rmst->record.backtrace_id);
+              dmalloc_message(":F:0x%08X:%d:%d:%d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.mtype,rmst->address_cnt,rmst->record.backtrace_id);
           }
           else
           {
-              dmalloc_message(":M:0x%08X:%d:%02d:%d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.type,rmst->address_cnt,rmst->record.backtrace_id);
+              dmalloc_message(":M:0x%08X:%d:%d:%d:0x%08X",rmst->id,rmst->record.size,(int)rmst->record.mtype,rmst->address_cnt,rmst->record.backtrace_id);
           }
           i++;
         //          free(s->str);
         }
-        dmalloc_message("========[%d]@%s\n",i,datetime);
+        dmalloc_message("========[%d]@%s\n\n",i,datetime);
         printf("[MGUARD]  Report_%d end @%s\n",sid,datetime);
 
 
@@ -411,6 +413,7 @@ static void *report_job(void *arg)
             printf("[MGUARD]  BTList_%d start @%s\n",sid,datetime);
 
             dmalloc_message("[MGUARD]BTList_%d\n++++++++@%s\n",sid,datetime);
+            dmalloc_message(":[TYPE]:[BACKTRACE_ID]:[MCALL_TYPE]:[XCOUNT]:[PID]:[TID]:[BACKTRACE]\n");
             HASH_ITER(hh, mtable, rmst, rtmp) {
                 size_t bid=rmst->record.backtrace_id;
                 HASH_FIND(hh,btrace,&bid,sizeof(size_t),rbt);
@@ -420,7 +423,7 @@ static void *report_job(void *arg)
                     HASH_FIND(hh,ubt_table,&bid,sizeof(size_t),ubt);
                     if(ubt==NULL)
                     {
-                        dmalloc_message_concat(":X:0x%08X:%d:%d:%d:",rbt->id,rbt->cnt,rbt->pid,rbt->tid);
+                        dmalloc_message_concat(":X:0x%08X:%d:%d:%d:%d:",rbt->id,rbt->mtype,rbt->cnt,rbt->pid,rbt->tid);
                         i++;
                         for(j=0;j<MAX_CALL_STACK_LEN;j++)
                         {
@@ -540,7 +543,7 @@ static int should_be_guard(mcall_record *record)
 //       return 0;
 //    }
 
-    switch(record->type) {
+    switch(record->mtype) {
         case MMAP_CALL:
         case MREMAP_CALL:
         case MUNMAP_CALL:
@@ -591,6 +594,7 @@ static void pre_guard(mcall_record *record) {
     _bt.pid=ourgetpid();
     _bt.id=_bt.pid;
     _bt.tracked=0;
+    _bt.mtype=record->mtype;
     if(env_opt_track)_bt.tracked=1;
 
     if( (unw_step(&cursor) <= 0))
@@ -654,7 +658,6 @@ static void pre_guard(mcall_record *record) {
 #endif
     _bt.id+=(size_t)pc;
     _bt.stack[i]=(void*)pc;
-    _bt.cursor[i]=&cursor;
     i++;
 
     while (1) {
@@ -674,7 +677,6 @@ static void pre_guard(mcall_record *record) {
 
         _bt.id+=(size_t)pc;
         _bt.stack[i]=(void*)pc;
-        _bt.cursor[i]=&cursor;
         i++;
 
     }
@@ -689,7 +691,7 @@ static void pre_guard(mcall_record *record) {
         if(tbt==NULL)
         {
 #if 0 // customized track filter for SZ JOVI OOM
-            if(FREE_CALL!=record->type)
+            if(FREE_CALL!=record->mtype)
             {
                 _bt.tracked=0;
             }
@@ -723,8 +725,9 @@ static void pre_guard(mcall_record *record) {
                               || 0==strncmp(fname,"_ZN10CSndBuffer8increaseEv",sizeof("_ZN10CSndBuffer8increaseEv"))
                            )
                         {
-                            printf("captured!!\n");
+
                             _bt.tracked=1;
+                            printf("captured!!\n");
                         }
 
                     }
@@ -765,7 +768,7 @@ void post_guard(mcall_record* record)
 {
     size_t mid;
     struct mcall_struct *mst;
-    switch(record->type) {
+    switch(record->mtype) {
 
         case MALLOC_CALL:
         case CALLOC_CALL:
@@ -822,17 +825,18 @@ void post_guard(mcall_record* record)
                         memcpy(&fst->record,record,sizeof(mcall_record));
                         fst->id=fid;
                         fst->address_cnt=1;
-                        //printf("free added!!\n");
                         HASH_ADD(hh,mcall_table,id,sizeof(size_t),fst);
+//                        printf("free added!!\n");
                     }
 
                 }
                 else
                 {
-                    //printf("freed!!\n");
+
                     HASH_DELETE(hh,mcall_table,mst);
                     uthash_free(mst,sizeof(struct mcall_struct));
                     mst=NULL;
+//                    printf("freed!!\n");
                 }
 
             }
@@ -857,7 +861,7 @@ ADD_MTABLE_RECORD:
            if(mst!=NULL)
            {
 
-               if(record->type==MREMAP_CALL || record->type==REALLOC_CALL )
+               if(record->mtype==MREMAP_CALL || record->mtype==REALLOC_CALL )
                {
                    memcpy(&mst->record,record,sizeof(mcall_record));
                }
@@ -872,7 +876,7 @@ ADD_MTABLE_RECORD:
                    }
                    else
                    {
-                       printf("!!!!! [MGUARD] NOT NULL 0x%08X,%d %d !!!!\n",mst->id,mst->record.type,record->type);
+                       printf("!!!!! [MGUARD] NOT NULL 0x%08X,%d %d !!!!\n",mst->id,mst->record.mtype,record->mtype);
                    }
 
                }
@@ -885,7 +889,7 @@ ADD_MTABLE_RECORD:
                mst->id=mid;
                mst->address_cnt=1;
                HASH_ADD(hh,mcall_table,id,sizeof(size_t),mst);
-               //printf("added!!\n");
+//               printf("added!!\n");
                //
            }
            pthread_rwlock_unlock(&mcall_table_lock);
@@ -1011,7 +1015,7 @@ static void do_mcall(mcall_record *record,va_list args) {
     if((!forked) && (!internal))
     {
         hookfns();
-        call_count_list[record->type]+=1;
+        call_count_list[record->mtype]+=1;
 
         if(should_be_guard(record))
         {
@@ -1020,7 +1024,7 @@ static void do_mcall(mcall_record *record,va_list args) {
     }
 
 
-    switch(record->type) {
+    switch(record->mtype) {
 
         case MALLOC_CALL:
         {
@@ -1116,7 +1120,7 @@ void* malloc(size_t size)
 {
     mcall_record record;
     INIT_RECORD(record);
-    record.type = MALLOC_CALL;
+    record.mtype = MALLOC_CALL;
     record.size = size;
 
     do_mcall(&record,nonused_va);
@@ -1128,7 +1132,7 @@ void* calloc(size_t ncount, size_t nsize)
 {
     mcall_record record;
     INIT_RECORD(record);
-    record.type = CALLOC_CALL;
+    record.mtype = CALLOC_CALL;
     record.calloc_call.ncount = ncount;
     record.calloc_call.nsize = nsize;
     record.size=ncount*nsize;
@@ -1142,7 +1146,7 @@ void* realloc(void *ptr, size_t size)
 {
     mcall_record record;
     INIT_RECORD(record);
-    record.type = REALLOC_CALL;
+    record.mtype = REALLOC_CALL;
     record.realloc_call.in_ptr = ptr;
     record.size = size;
 
@@ -1155,7 +1159,7 @@ void free(void *ptr)
 {
     mcall_record record;
     INIT_RECORD(record);
-    record.type = FREE_CALL;
+    record.mtype = FREE_CALL;
     record.ptr = ptr;
 
 	do_mcall(&record,nonused_va);
@@ -1165,7 +1169,7 @@ void* dlopen(const char* filename, int flag)
 {
     mcall_record record;
     INIT_RECORD(record);
-    record.type = DLOPEN_CALL;
+    record.mtype = DLOPEN_CALL;
     record.dlopen_call.filename=filename;
     record.dlopen_call.flag = flag;
 
@@ -1178,7 +1182,7 @@ int dlclose(void* handle)
 {
     mcall_record record;
     INIT_RECORD(record);
-    record.type = DLCLOSE_CALL;
+    record.mtype = DLCLOSE_CALL;
     record.ptr = handle;
 
     do_mcall(&record,nonused_va);
@@ -1190,7 +1194,7 @@ void* memalign(size_t boundary, size_t size)
 {
     mcall_record record;
     INIT_RECORD(record);
-    record.type = MEMALIGN_CALL;
+    record.mtype = MEMALIGN_CALL;
     record.memalign_call.boundary = boundary;
     record.size = size;
 
@@ -1203,7 +1207,7 @@ int posix_memalign(void** memptr, size_t alignment, size_t size)
 {
     mcall_record record;
     INIT_RECORD(record);
-    record.type = POSIX_MEMALIGN_CALL;
+    record.mtype = POSIX_MEMALIGN_CALL;
     record.posix_memalign_call.memptr = memptr;
     record.posix_memalign_call.alignment = alignment;
     record.size = size;
@@ -1217,7 +1221,7 @@ void* valloc(size_t size)
 {
     mcall_record record;
     INIT_RECORD(record);
-    record.type = VALLOC_CALL;
+    record.mtype = VALLOC_CALL;
     record.size = size;
 
 	do_mcall(&record,nonused_va);
@@ -1229,7 +1233,7 @@ void* mmap(void *start, size_t size, int prot, int flag, int fd, off_t offset)
 {
     mcall_record record;
     INIT_RECORD(record);
-    record.type = MMAP_CALL;
+    record.mtype = MMAP_CALL;
     record.mmap_call.start = start;
     record.size=size;
     record.mmap_call.prot = prot;
@@ -1248,7 +1252,7 @@ void* mremap(void *in_ptr, size_t in_size, size_t size, int flag,...)
 {
     va_list args;
     mcall_record record;
-    record.type = MREMAP_CALL;
+    record.mtype = MREMAP_CALL;
     record.mremap_call.in_ptr = in_ptr;
     record.size = size;
     record.mremap_call.in_size = in_size;
@@ -1265,7 +1269,7 @@ int munmap(void *ptr, size_t size)
 {
 	mcall_record record;
 	INIT_RECORD(record);
-	record.type = MUNMAP_CALL;
+	record.mtype = MUNMAP_CALL;
 	record.size = size;
 	record.ptr = ptr;
 

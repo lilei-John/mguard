@@ -50,7 +50,10 @@ def main():
         if line.startswith(fstr):
             tokens=line.split(":")
             k=tokens[2].strip()
-            smap[k]=tokens[6].strip()
+            if ver>2 :
+                smap[k]=tokens[7].strip()
+            else:    
+                smap[k]=tokens[6].strip()
         line_count+=1
 
     for line in open(inputFile):
@@ -59,7 +62,7 @@ def main():
             tokens=line.split(":")
             k=tokens[5].strip()
             if ver>1 :
-                k=token[6].strip()
+                k=tokens[6].strip()
             m=None
             if not rmap.has_key(k):
                 m=MSummary()
@@ -72,6 +75,8 @@ def main():
 
             m.count+=1
             m.size+=int(tokens[3])
+            if ver>2:
+                m.mtype=int(tokens[4])
 
     keys=rmap.keys()
     keys.sort()
@@ -80,7 +85,7 @@ def main():
     for k in keys:
         m=rmap[k]
         total_mem+=m.size
-        str=":S:{}:{}:{}:{}".format(k,m.size,m.count,"--" if not smap.has_key(k) else smap[k])
+        str=":S:{}:{}:{}:{}:{}".format(k,m.mtype,m.size,m.count,"--" if not smap.has_key(k) else smap[k])
 ##        print '>>>> '+str
         if out is not None:
             out.write(str)
