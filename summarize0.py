@@ -37,7 +37,7 @@ def main():
 
         if headers !=0 and ver>1 and line.startswith("========@"):
             out.write("\n")
-            out.write(':[TYPE]:[BACKTRACE_ID]:[TOTAL_UNFREED_SIZE]:[XCOUNT]:[BACKTRACE]'+"\n")
+            out.write(':[S]:[BACKTRACE_ID]:[MTYPE]:[TOTAL_UNFREED_SIZE]:[XCOUNT]:[BACKTRACE]'+"\n")
             out.write(line+"\n")
             headers=0
         elif headers!=0 and ver==1 and line_count>=7:

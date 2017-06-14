@@ -773,6 +773,8 @@ void post_guard(mcall_record* record)
         case MALLOC_CALL:
         case CALLOC_CALL:
         case REALLOC_CALL:
+        case MMAP_CALL:
+        case VALLOC_CALL:
         {
             goto ADD_MTABLE_RECORD;
         }
@@ -780,6 +782,7 @@ void post_guard(mcall_record* record)
 
 
         case FREE_CALL:
+        case MUNMAP_CALL:
         {
             mid=(size_t)record->ptr;
             if (pthread_rwlock_wrlock(&mcall_table_lock) != 0) MERR;
@@ -1024,6 +1027,7 @@ static void do_mcall(mcall_record *record,va_list args) {
     }
 
 
+//    if(((record->size) == 0xFF000) || ((record->size)==0x100000))printf("[!!!MGUARD!!!] %d size=0x%08X\n",record->mtype,record->size);
     switch(record->mtype) {
 
         case MALLOC_CALL:
